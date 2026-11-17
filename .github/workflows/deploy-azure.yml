@@ -1,0 +1,37 @@
+# Build the image in Azure Container Registry and roll it out to Container Apps.
+# Needs the one-time setup in docs/azure.md (resource group, Bicep deployment, OIDC federated credential).
+name: Deploy to Azure
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write   # OIDC login: no Azure password stored in GitHub
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      REGISTRY: ${{ vars.AZURE_REGISTRY_NAME }}
+      APP: ${{ vars.AZURE_CONTAINER_APP }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Build in ACR
+        run: az acr build --registry "$REGISTRY" --image "wordbridge:${{ github.sha }}" .
+      - name: Roll out
+        run: |
+          az containerapp update -g "$RESOURCE_GROUP" -n "$APP" \
+            --image "$REGISTRY.azurecr.io/wordbridge:${{ github.sha }}"
+          URL=$(az containerapp show -g "$RESOURCE_GROUP" -n "$APP" --query properties.configuration.ingress.fqdn -o tsv)
+          for i in $(seq 1 30); do curl -sf "https://$URL/api/health" && exit 0; sleep 10; done
+          echo "health check failed" && exit 1

@@ -1,0 +1,41 @@
+# Local stack: PostgreSQL (dictionary) + MongoDB (submissions) + the Next.js app on http://localhost:3000
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: wordbridge
+      POSTGRES_USER: wordbridge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wordbridge}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wordbridge -d wordbridge"]
+      interval: 5s
+      retries: 10
+
+  mongo:
+    image: mongo:8
+    volumes: [mongodata:/data/db]
+    ports: ["127.0.0.1:27017:27017"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    image: wordbridge
+    depends_on:
+      postgres: { condition: service_healthy }
+      mongo: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://wordbridge:${POSTGRES_PASSWORD:-wordbridge}@postgres:5432/wordbridge
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DB: wordbridge
+      MODERATOR_TOKENS: ${MODERATOR_TOKENS:-demo:local-demo-token-change-me}
+      SEED: ${SEED:-1}
+    ports: ["3000:3000"]
+
+volumes:
+  pgdata:
+  mongodata:

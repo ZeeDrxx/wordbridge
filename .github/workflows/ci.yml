@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env: { POSTGRES_DB: wordbridge, POSTGRES_USER: wordbridge, POSTGRES_PASSWORD: wordbridge }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U wordbridge" --health-interval 5s --health-retries 10
+      mongo:
+        image: mongo:8
+        ports: ["27017:27017"]
+    env:
+      DATABASE_URL: postgres://wordbridge:wordbridge@localhost:5432/wordbridge
+      MONGODB_URI: mongodb://localhost:27017
+      MODERATOR_TOKENS: ci:ci-token-0123456789abcdef
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Migrations are up to date with the schema
+        run: npx drizzle-kit generate --name ci-check && git diff --exit-code --stat -- drizzle
+      - run: npm run db:migrate && npm run db:seed
+      - run: npm test
+      - run: npm run build
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and smoke-test the stack
+        run: |
+          docker compose up -d --build --wait
+          curl -sf localhost:3000/api/health
+          curl -sf "localhost:3000/api/search?q=bezzaf" | grep -q '"slug":"bzzaf"'
+      - if: failure()
+        run: docker compose logs
